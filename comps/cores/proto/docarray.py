@@ -82,6 +82,7 @@ class DocSumDoc(BaseDoc):
     text: Optional[str] = None
     audio: Optional[str] = None
     video: Optional[str] = None
+    file: Optional[str] = None
 
 
 class DocPath(BaseDoc):

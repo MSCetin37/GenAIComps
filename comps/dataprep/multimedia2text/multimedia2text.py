@@ -7,6 +7,7 @@ import os
 import requests
 
 from comps import CustomLogger
+from comps.cores.mega.gateway import read_text_from_file
 
 # Initialize custom logger
 logger = CustomLogger("multimedia2text")
@@ -62,6 +63,32 @@ async def audio_to_text(input: DocSumDoc):
     if input.text is not None:
         logger.info("Processing text input")
         response_to_return = input.text
+
+    if input.file is not None:
+        file_summaries = []
+        # if files:
+        #         for file in files:
+        file_path = f"/tmp/{input.file}"
+
+        # if data_type is not None and data_type in ["audio", "video"]:
+        #     raise ValueError(
+        #         "Audio and Video file uploads are not supported in docsum with curl request, please use the UI."
+        #     )
+
+    # else:
+        import aiofiles
+
+        async with aiofiles.open(file_path, "wb") as f:
+            await f.write(await input.file.read())
+
+        docs = read_text_from_file(input.file, file_path)
+        os.remove(file_path)
+
+        if isinstance(docs, list):
+            file_summaries.extend(docs)
+        else:
+            file_summaries.append(docs)
+
 
     if response_to_return is None:
         logger.warning("No valid input provided")
