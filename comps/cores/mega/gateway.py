@@ -440,34 +440,7 @@ class DocSumGateway(Gateway):
 
             data_type = data.get("type")
 
-            file_summaries = []
-            if files:
-                for file in files:
-                    file_path = f"/tmp/{file.filename}"
-
-                    if data_type is not None and data_type in ["audio", "video"]:
-                        raise ValueError(
-                            "Audio and Video file uploads are not supported in docsum with curl request, please use the UI."
-                        )
-
-                    else:
-                        import aiofiles
-
-                        async with aiofiles.open(file_path, "wb") as f:
-                            await f.write(await file.read())
-
-                        docs = read_text_from_file(file, file_path)
-                        os.remove(file_path)
-
-                        if isinstance(docs, list):
-                            file_summaries.extend(docs)
-                        else:
-                            file_summaries.append(docs)
-
-            if file_summaries:
-                prompt = self._handle_message(chat_request.messages) + "\n".join(file_summaries)
-            else:
-                prompt = self._handle_message(chat_request.messages)
+            prompt = self._handle_message(chat_request.messages)
 
             data_type = data.get("type")
             if data_type is not None:
