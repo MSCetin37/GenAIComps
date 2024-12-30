@@ -65,18 +65,10 @@ async def audio_to_text(input: DocSumDoc):
         response_to_return = input.text
 
     if input.file is not None:
-        file_summaries = []
-        # if files:
-        #         for file in files:
-        file_path = f"/tmp/{input.file}"
-
-        # if data_type is not None and data_type in ["audio", "video"]:
-        #     raise ValueError(
-        #         "Audio and Video file uploads are not supported in docsum with curl request, please use the UI."
-        #     )
-
-    # else:
         import aiofiles
+
+        logger.info("Processing file input")
+        file_path = f"/tmp/{input.file}"
 
         async with aiofiles.open(file_path, "wb") as f:
             await f.write(await input.file.read())
@@ -84,11 +76,7 @@ async def audio_to_text(input: DocSumDoc):
         docs = read_text_from_file(input.file, file_path)
         os.remove(file_path)
 
-        if isinstance(docs, list):
-            file_summaries.extend(docs)
-        else:
-            file_summaries.append(docs)
-
+        response_to_return = docs
 
     if response_to_return is None:
         logger.warning("No valid input provided")
