@@ -7,9 +7,9 @@ import time
 from typing import List, Optional, Union
 
 from fastapi import Body, File, UploadFile
-from integrations.redis_multimodal import OpeaMultimodalRedisDataprep
-from integrations.vdms_multimodal import OpeaMultimodalVdmsDataprep
-from opea_dataprep_loader import OpeaDataprepMultiModalLoader
+from comps.dataprep.src.integrations.redis_multimodal import OpeaMultimodalRedisDataprep
+from comps.dataprep.src.integrations.vdms_multimodal import OpeaMultimodalVdmsDataprep
+from comps.dataprep.src.opea_dataprep_loader import OpeaDataprepMultiModalLoader
 
 from comps import (
     CustomLogger,
@@ -41,14 +41,28 @@ loader = OpeaDataprepMultiModalLoader(
     port=5000,
 )
 @register_statistics(names=["opea_service@dataprep_multimodal"])
-async def ingest_files(files: Optional[Union[UploadFile, List[UploadFile]]] = File(None)):
+async def ingest_files(files: Optional[Union[UploadFile, List[UploadFile]]] = File(None),  
+                       index_name: Optional[str] = File(None)
+                       # index_name: Optional[str]=str(None),
+                       ):
     start = time.time()
     
     logger.info(">>>>>>>>>>>>>> this is /v1/dataprep/ingest")
+    logger.info(f"[index_name] :{index_name}")
+    
+    if index_name:
+        print(">>>>>>>> table name will be updated .... ")
+        print(f"INDEX_NAME: {os.environ['INDEX_NAME']}")
+        # Set an environment variable
+        os.environ['INDEX_NAME'] = index_name
+        print(f"INDEX_NAME: {os.environ['INDEX_NAME']}")
+        
+        
     logger.info(f"[ ingest ] files:{files}")
+    
     logger.info(f"[ component ] files:{dataprep_component_name}")
     
-    DATAPREP_MMR_PORT = os.getenv("DATAPREP_MMR_PORT") # , "OPEA_DATAPREP_MULTIMODALVDMS")
+    DATAPREP_MMR_PORT = os.getenv("DATAPREP_MMR_PORT") 
     logger.info(f"[ DATAPREP_MMR_PORT ] files:{DATAPREP_MMR_PORT}")
         
     logger.info("------------------------------------------")
@@ -163,7 +177,9 @@ async def ingest_generate_captions(files: Optional[Union[UploadFile, List[Upload
 @register_statistics(names=["opea_service@dataprep_multimodal"])
 async def get_files():
     start = time.time()
-
+    
+    # logger.info(f"Processing video input at {_endpoint}/v1/video2audio")
+    
     if logflag:
         logger.info("[ get ] start to get ingested files")
 
@@ -266,8 +282,45 @@ async def delete_files(file_path: str = Body(..., embed=True)):
         logger.error(f"Error during dataprep delete invocation: {e}")
         raise
 
+@register_microservice(
+    name="opea_service@dataprep_multimodal",
+    service_type=ServiceType.DATAPREP,
+    endpoint="/v1/dataprep/indexes",
+    host="0.0.0.0",
+    port=5000,
+)
+@register_statistics(names=["opea_service@dataprep_multimodal"])
+async def get_list_of_indexes():
+    start = time.time()
+    
+    logger.info(">>>>> [ get ] start to get list of indexes.")
+
+    if logflag:
+        logger.info("[ get ] start to get list of indexes.")
+
+    try:
+        # Use the loader to invoke the component
+        # response = await loader.get_files()
+        print("=============================================================")
+        response = await loader.get_list_of_indexes()
+        
+        logger.info(f"[ get ] list of indexes: {response}")
+        print("=============================================================")
+        
+        # Log the result if logging is enabled
+        if logflag:
+            logger.info(f"[ get ] list of indexes: {response}")
+            
+        # Record statistics
+        statistics_dict["opea_service@dataprep_multimodal"].append_latency(time.time() - start, None)
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error during dataprep get list of indexes: {e}")
+        raise
+    
 
 if __name__ == "__main__":
-    logger.info("OPEA Dataprep Multimodal Microservice is starting...")
+    logger.info("OPEA Dataprep Multimodal Microservice is starting...")        
     create_upload_folder(upload_folder)
     opea_microservices["opea_service@dataprep_multimodal"].start()

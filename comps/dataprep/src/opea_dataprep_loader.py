@@ -79,3 +79,10 @@ class OpeaDataprepMultiModalLoader(OpeaComponentLoader):
         if logflag:
             logger.info("[ dataprep loader ] delete files")
         return await self.component.delete_files(*args, **kwargs)
+
+    async def get_list_of_indexes(self, *args, **kwargs):
+        if logflag:
+            logger.info("[ dataprep loader ] get indexes")
+        return self.component.get_list_of_indexes(*args, **kwargs)
+        # return await self.component.get_list_of_indexes(*args, **kwargs)
+        

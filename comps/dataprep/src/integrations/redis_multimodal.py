@@ -7,6 +7,8 @@ import os
 import shutil
 import time
 import uuid
+import redis
+
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Type, Union
 
@@ -105,6 +107,8 @@ INDEX_SCHEMA = schema_path
 logger = CustomLogger("opea_dataprep_redis_multimodal")
 logflag = os.getenv("LOGFLAG", False)
 
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=os.getenv("REDIS_PASSWORD", None))
+
 
 class MultimodalRedis(Redis):
     """Redis vector database to process multimodal data."""
@@ -192,6 +196,11 @@ class MultimodalRedis(Redis):
             if images
             else instance.add_text(texts, metadatas, keys=keys)
         )
+        
+        logger.info(" >>>>>>> from_text_image_pairs_return_keys .... ")
+        print("keys: ", keys)
+        # print("instance: ", instance)
+        
         return instance, keys
 
     def add_text_image_pairs(
@@ -465,6 +474,16 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
                 annotation, path_to_frames, filename
             )
 
+        
+        # # Vector Index Configuration
+        # print(">>>>>>> INDEX_NAME:", INDEX_NAME)
+        # INDEX_NAME = os.getenv("INDEX_NAME", "mm-rag-redis")
+        # print(">>>>>>> INDEX_NAME:", INDEX_NAME)
+        
+        INDEX_NAME = os.getenv("INDEX_NAME", "mm-rag-redis")
+        
+        print(">>>>>>> INDEX_NAME:", INDEX_NAME)
+        
         MultimodalRedis.from_text_image_pairs_return_keys(
             texts=[f"From {filename}. " + text for text in text_list],
             images=image_list,
@@ -475,6 +494,15 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
             redis_url=REDIS_URL,
         )
 
+    def get_list_of_indexes(self, redis_client=redis_client):        
+        # Use the FT._LIST command to get the list of indexes
+        indexes = redis_client.execute_command('FT._LIST')
+        indexes_list = [item.decode('utf-8').strip("'") for item in indexes]
+        print(">>>>>>>>  >>>>>> indexes_list:", indexes_list)
+
+        return indexes_list
+        
+    
     def drop_index(self, index_name, redis_url=REDIS_URL):
         logger.info(f"dropping index {index_name}")
         try:
@@ -648,6 +676,9 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
         raise HTTPException(status_code=400, detail="Must provide at least one file.")
 
     async def ingest_files(self, files: Optional[Union[UploadFile, List[UploadFile]]] = File(None)):
+        
+        logger.info(">>>>>>>>>>>> redis multimodal - Redis Ingest Files <<<<<<<<<<<<")
+        
         if files:
             accepted_media_formats = [".mp4", ".png", ".jpg", ".jpeg", ".gif", ".pdf"]
             # Create a lookup dictionary containing all media files
@@ -706,6 +737,7 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
                 uploaded_files_map[file_name] = media_file_name
 
                 if file_extension == ".pdf":
+                    
                     # Set up location to store pdf images and text, reusing "frames" and "annotations" from video
                     output_dir = os.path.join(self.upload_folder, media_dir_name)
                     os.makedirs(output_dir, exist_ok=True)
@@ -745,6 +777,9 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
                                     "sub_video_id": image_idx,
                                 }
                             )
+                    
+                    print(">>>> len(annotations)",len(annotations))
+                    # print(">>>> annotations:", annotations)
 
                     with open(os.path.join(output_dir, "annotations.json"), "w") as f:
                         json.dump(annotations, f)
@@ -753,6 +788,7 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
                     self.ingest_multimodal(
                         file_name, os.path.join(self.upload_folder, media_dir_name), self.embeddings, is_pdf=True
                     )
+                    
                 else:
                     # Save caption file in upload directory
                     caption_file_extension = os.path.splitext(matched_files[media_file][1].filename)[1]
@@ -793,6 +829,8 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
     async def get_files(self):
         """Returns list of names of uploaded videos saved on the server."""
 
+        logger.info(f">>>>>>> get_files .... from self.upload_folder:: {self.upload_folder}")
+        
         if not Path(self.upload_folder).exists():
             logger.info("No file uploaded, return empty list.")
             return []
