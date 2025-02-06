@@ -197,10 +197,6 @@ class MultimodalRedis(Redis):
             else instance.add_text(texts, metadatas, keys=keys)
         )
         
-        logger.info(" >>>>>>> from_text_image_pairs_return_keys .... ")
-        print("keys: ", keys)
-        # print("instance: ", instance)
-        
         return instance, keys
 
     def add_text_image_pairs(
@@ -473,16 +469,8 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
             text_list, image_list, metadatas = self.prepare_data_and_metadata_from_annotation(
                 annotation, path_to_frames, filename
             )
-
-        
-        # # Vector Index Configuration
-        # print(">>>>>>> INDEX_NAME:", INDEX_NAME)
-        # INDEX_NAME = os.getenv("INDEX_NAME", "mm-rag-redis")
-        # print(">>>>>>> INDEX_NAME:", INDEX_NAME)
         
         INDEX_NAME = os.getenv("INDEX_NAME", "mm-rag-redis")
-        
-        print(">>>>>>> INDEX_NAME:", INDEX_NAME)
         
         MultimodalRedis.from_text_image_pairs_return_keys(
             texts=[f"From {filename}. " + text for text in text_list],
@@ -493,16 +481,47 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
             index_schema=INDEX_SCHEMA,
             redis_url=REDIS_URL,
         )
-
-    def get_list_of_indexes(self, redis_client=redis_client):        
-        # Use the FT._LIST command to get the list of indexes
-        indexes = redis_client.execute_command('FT._LIST')
-        indexes_list = [item.decode('utf-8').strip("'") for item in indexes]
-        print(">>>>>>>>  >>>>>> indexes_list:", indexes_list)
-
-        return indexes_list
-        
     
+    def get_list_of_indices(self, redis_client=redis_client):
+        """
+        Retrieves a list of all indices from the Redis client.
+
+        Args:
+            redis_client: The Redis client instance to use for executing commands.
+
+        Returns:
+            A list of index names as strings.
+        """
+        # Execute the command to list all indices
+        indices = redis_client.execute_command('FT._LIST')
+        # Decode each index name from bytes to string and strip any surrounding single quotes
+        indices_list = [item.decode('utf-8').strip("'") for item in indices]
+        return indices_list
+        
+    def get_items_of_index(self, index_name=INDEX_NAME, redis_client=redis_client):
+        """
+        Retrieves items from a specific index in Redis.
+
+        Args:
+            index_name: The name of the index to search.
+            redis_client: The Redis client instance to use for executing commands.
+
+        Returns:
+            A sorted list of items from the specified index.
+        """
+        # Execute the command to search for all items in the specified index
+        results = redis_client.execute_command(f'FT.SEARCH {index_name} {"*"} LIMIT 0 100')
+        list_of_items = []
+        # Iterate through the results
+        for r in results:
+            if isinstance(r, list):
+                # Extract and decode the item where 'source_video' is found in the value
+                list_of_items.append(
+                    [r[i+1].decode('utf-8') for i, v in enumerate(r) if 'source_video' in str(v)][0]
+                )
+        # Return the sorted list of items
+        return sorted(list_of_items)
+        
     def drop_index(self, index_name, redis_url=REDIS_URL):
         logger.info(f"dropping index {index_name}")
         try:
@@ -677,8 +696,6 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
 
     async def ingest_files(self, files: Optional[Union[UploadFile, List[UploadFile]]] = File(None)):
         
-        logger.info(">>>>>>>>>>>> redis multimodal - Redis Ingest Files <<<<<<<<<<<<")
-        
         if files:
             accepted_media_formats = [".mp4", ".png", ".jpg", ".jpeg", ".gif", ".pdf"]
             # Create a lookup dictionary containing all media files
@@ -778,9 +795,6 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
                                 }
                             )
                     
-                    print(">>>> len(annotations)",len(annotations))
-                    # print(">>>> annotations:", annotations)
-
                     with open(os.path.join(output_dir, "annotations.json"), "w") as f:
                         json.dump(annotations, f)
 
@@ -828,8 +842,6 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
 
     async def get_files(self):
         """Returns list of names of uploaded videos saved on the server."""
-
-        logger.info(f">>>>>>> get_files .... from self.upload_folder:: {self.upload_folder}")
         
         if not Path(self.upload_folder).exists():
             logger.info("No file uploaded, return empty list.")
