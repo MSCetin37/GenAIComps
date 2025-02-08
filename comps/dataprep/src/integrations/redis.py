@@ -98,12 +98,12 @@ def format_redis_conn_from_env():
 REDIS_URL = format_redis_conn_from_env()
 redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
 
-
-def check_index_existance(client):
+def check_index_existance(client, index_name: str = KEY_INDEX_NAME):
     if logflag:
         logger.info(f"[ check index existence ] checking {client}")
     try:
         results = client.search("*")
+        
         if logflag:
             logger.info(f"[ check index existence ] index of client exists: {client}")
         return results
@@ -114,11 +114,16 @@ def check_index_existance(client):
 
 
 def create_index(client, index_name: str = KEY_INDEX_NAME):
+    
+    print(">>>>>>>>>>>>>> create_index - index_name:", index_name)
+    
     if logflag:
         logger.info(f"[ create index ] creating index {index_name}")
     try:
         definition = IndexDefinition(index_type=IndexType.HASH, prefix=["file:"])
         client.create_index((TextField("file_name"), TextField("key_ids")), definition=definition)
+        # client.create_index((TextField("index_name"), TextField("file_name"), TextField("key_ids")), definition=definition)
+        
         if logflag:
             logger.info(f"[ create index ] index {index_name} successfully created")
     except Exception as e:
@@ -183,8 +188,15 @@ def delete_by_id(client, id):
 
 
 def ingest_chunks_to_redis(file_name: str, chunks: List):
+    KEY_INDEX_NAME = os.getenv("KEY_INDEX_NAME")
+    
+    print(">>>>>>>>>>>>>>>>>>>>     INDEX_NAME:", INDEX_NAME)
+    print(">>>>>>>>>>>>>>>>>>>> KEY_INDEX_NAME:", KEY_INDEX_NAME)
+    print(">>>>>>>>>>>>>>>>>>>>      file_name:", file_name)
+    
+    
     if logflag:
-        logger.info(f"[ redis ingest chunks ] file name: {file_name}")
+        logger.info(f"[ redis ingest chunks ] file name: '{file_name}' to '{KEY_INDEX_NAME}' index.")
     # Create vectorstore
     if TEI_EMBEDDING_ENDPOINT:
         # create embeddings using TEI endpoint service
@@ -207,7 +219,7 @@ def ingest_chunks_to_redis(file_name: str, chunks: List):
         _, keys = Redis.from_texts_return_keys(
             texts=batch_texts,
             embedding=embedder,
-            index_name=INDEX_NAME,
+            index_name=KEY_INDEX_NAME,
             redis_url=REDIS_URL,
         )
         if logflag:
@@ -215,15 +227,17 @@ def ingest_chunks_to_redis(file_name: str, chunks: List):
         file_ids.extend(keys)
         if logflag:
             logger.info(f"[ redis ingest chunks ] Processed batch {i//batch_size + 1}/{(num_chunks-1)//batch_size + 1}")
-
+    
     # store file_ids into index file-keys
     r = redis.Redis(connection_pool=redis_pool)
     client = r.ft(KEY_INDEX_NAME)
+    
     if not check_index_existance(client):
-        assert create_index(client)
-
+        assert create_index(client, index_name=KEY_INDEX_NAME)
+    
     try:
         assert store_by_id(client, key=file_name, value="#".join(file_ids))
+        
     except Exception as e:
         if logflag:
             logger.info(f"[ redis ingest chunks ] {e}. Fail to store chunks of file {file_name}.")
@@ -272,6 +286,7 @@ def ingest_data_to_redis(doc_path: DocPath):
         logger.info(f"[ redis ingest data ] Done preprocessing. Created {len(chunks)} chunks of the given file.")
 
     file_name = doc_path.path.split("/")[-1]
+    
     return ingest_chunks_to_redis(file_name, chunks)
 
 
@@ -348,7 +363,9 @@ class OpeaRedisDataprep(OpeaComponent):
         if logflag:
             logger.info(f"[ redis ingest ] files:{files}")
             logger.info(f"[ redis ingest ] link_list:{link_list}")
-
+        
+        KEY_INDEX_NAME = os.getenv("KEY_INDEX_NAME")
+            
         if files:
             if not isinstance(files, list):
                 files = [files]
@@ -363,19 +380,21 @@ class OpeaRedisDataprep(OpeaComponent):
                 # check whether the file already exists
                 key_ids = None
                 try:
+                    #TODO: =====> this needs to be checked ....
                     key_ids = search_by_id(self.key_index_client, doc_id).key_ids
                     if logflag:
-                        logger.info(f"[ redis ingest] File {file.filename} already exists.")
+                        logger.info(f"[ redis ingest] File '{file.filename}' already exists in '{KEY_INDEX_NAME}' index.")
                 except Exception as e:
                     logger.info(f"[ redis ingest] File {file.filename} does not exist.")
                 if key_ids:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Uploaded file {file.filename} already exists. Please change file name.",
+                        detail=f"Uploaded file '{file.filename}' already exists in '{KEY_INDEX_NAME}' index. Please change file name or 'index_name'.",
                     )
 
                 save_path = upload_folder + encode_file
                 await save_content_to_local_disk(save_path, file)
+                
                 ingest_data_to_redis(
                     DocPath(
                         path=save_path,
@@ -592,3 +611,40 @@ class OpeaRedisDataprep(OpeaComponent):
             if logflag:
                 logger.info(f"[ redis delete ] Delete folder {file_path} is not supported for now.")
             raise HTTPException(status_code=404, detail=f"Delete folder {file_path} is not supported for now.")
+
+    def get_list_of_indices(self):
+        """
+        Retrieves a list of all indices from the Redis client.
+        
+        Returns:
+            A list of index names as strings.
+        """
+        # Execute the command to list all indices
+        indices = self.client.execute_command('FT._LIST')
+        # Decode each index name from bytes to string
+        indices_list = [item.decode('utf-8') for item in indices]
+        return indices_list
+    
+    def get_items_of_index(self, index_name=INDEX_NAME): # , redis_client=redis_client):
+        """
+        Retrieves items from a specific index in Redis.
+
+        Args:
+            index_name: The name of the index to search.
+            redis_client: The Redis client instance to use for executing commands.
+
+        Returns:
+            A sorted list of items from the specified index.
+        """
+        # Execute the command to search for all items in the specified index
+        results = self.client.execute_command(f'FT.SEARCH {index_name} {"*"} LIMIT 0 100')
+        list_of_items = []
+        # Iterate through the results
+        for r in results:
+            if isinstance(r, list):
+                # Extract and decode the item where 'source_video' is found in the value
+                list_of_items.append(
+                    [r[i+1].decode('utf-8') for i, v in enumerate(r) if 'source_video' in str(v)][0]
+                )
+        # Return the sorted list of items
+        return sorted(list_of_items)
