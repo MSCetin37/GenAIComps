@@ -334,6 +334,10 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
 
     def __init__(self, name: str, description: str, config: dict = None):
         super().__init__(name, ServiceType.DATAPREP.name.lower(), description, config)
+        
+        print(">>>>>>>>>>>>>>>>>>>> OpeaMultimodalRedisDataprep - __init__ name:", name)
+        print(">>>>>>>>>>>>>>>>>>>> OpeaMultimodalRedisDataprep - __init__ description:", description)
+                
         self.device = "cpu"
         self.upload_folder = "./uploaded_files/"
         # Load embeddings model
@@ -459,6 +463,8 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
         path_to_frames = os.path.join(data_folder, "frames")
 
         annotation = load_json_file(annotation_file_path)
+        
+        print(">>>>>>>>>>>>>>>>>>>> ingest_multimodal - annotation:", annotation)
 
         # prepare data to ingest
         if is_pdf:
@@ -471,6 +477,10 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
             )
         
         INDEX_NAME = os.getenv("INDEX_NAME", "mm-rag-redis")
+        
+        print(">>>>>>>>>>>>>>>>>>>> ingest_multimodal - filename:", filename)
+        print(">>>>>>>>>>>>>>>>>>>> ingest_multimodal - text_list:", len(text_list))
+        print()
         
         MultimodalRedis.from_text_image_pairs_return_keys(
             texts=[f"From {filename}. " + text for text in text_list],
@@ -496,6 +506,7 @@ class OpeaMultimodalRedisDataprep(OpeaComponent):
         indices = redis_client.execute_command('FT._LIST')
         # Decode each index name from bytes to string and strip any surrounding single quotes
         indices_list = [item.decode('utf-8').strip("'") for item in indices]
+        print(">>>>>>>>>>>>>>>>>>>> redis mm - get_list_of_indices ", indices_list)
         return indices_list
         
     def get_items_of_index(self, index_name=INDEX_NAME, redis_client=redis_client):

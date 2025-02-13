@@ -36,12 +36,7 @@ class OpeaDataprepLoader(OpeaComponentLoader):
         if logflag:
             logger.info("[ dataprep loader ] get indices")
         return self.component.get_list_of_indices(*args, **kwargs)
-    
-    async def get_items_of_index(self, *args, **kwargs):
-        if logflag:
-            logger.info("[ dataprep loader ] get items of the index")
-        return self.component.get_items_of_index(*args, **kwargs)
-    
+
 
 class OpeaDataprepMultiModalLoader(OpeaComponentLoader):
     def __init__(self, component_name, **kwargs):

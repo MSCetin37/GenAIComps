@@ -1,8 +1,7 @@
 beautifulsoup4
 cairosvg
 decord
-docarray 
-# [full]
+docarray[full]
 docx2txt
 easyocr
 einops
@@ -41,7 +40,7 @@ pgvector==0.2.5
 Pillow
 pinecone-client
 prometheus-fastapi-instrumentator
-#psycopg2
+psycopg2
 pymupdf
 pyspark
 pytesseract

@@ -114,9 +114,6 @@ def check_index_existance(client, index_name: str = KEY_INDEX_NAME):
 
 
 def create_index(client, index_name: str = KEY_INDEX_NAME):
-    
-    print(">>>>>>>>>>>>>> create_index - index_name:", index_name)
-    
     if logflag:
         logger.info(f"[ create index ] creating index {index_name}")
     try:
@@ -135,14 +132,14 @@ def create_index(client, index_name: str = KEY_INDEX_NAME):
 
 def store_by_id(client, key, value):
     if logflag:
-        logger.info(f"[ store by id ] storing ids of {key}")
+        logger.info(f"[ store by id ] storing ids of {client.index_name + '_' + key}")
     try:
-        client.add_document(doc_id="file:" + key, file_name=key, key_ids=value)
+        client.add_document(doc_id="file:" + client.index_name + '_' + key, file_name=client.index_name + '_' + key, key_ids=value)
         if logflag:
-            logger.info(f"[ store by id ] store document success. id: file:{key}")
+            logger.info(f"[ store by id ] store document success. id: file:{client.index_name + '_' + key}")
     except Exception as e:
         if logflag:
-            logger.info(f"[ store by id ] fail to store document file:{key}: {e}")
+            logger.info(f"[ store by id ] fail to store document file:{client.index_name + '_' + key}: {e}")
         return False
     return True
 
@@ -188,13 +185,7 @@ def delete_by_id(client, id):
 
 
 def ingest_chunks_to_redis(file_name: str, chunks: List):
-    KEY_INDEX_NAME = os.getenv("KEY_INDEX_NAME")
-    
-    print(">>>>>>>>>>>>>>>>>>>>     INDEX_NAME:", INDEX_NAME)
-    print(">>>>>>>>>>>>>>>>>>>> KEY_INDEX_NAME:", KEY_INDEX_NAME)
-    print(">>>>>>>>>>>>>>>>>>>>      file_name:", file_name)
-    
-    
+    KEY_INDEX_NAME = os.getenv("KEY_INDEX_NAME", "file-keys")    
     if logflag:
         logger.info(f"[ redis ingest chunks ] file name: '{file_name}' to '{KEY_INDEX_NAME}' index.")
     # Create vectorstore
@@ -222,6 +213,7 @@ def ingest_chunks_to_redis(file_name: str, chunks: List):
             index_name=KEY_INDEX_NAME,
             redis_url=REDIS_URL,
         )
+        keys = [k.replace(KEY_INDEX_NAME, KEY_INDEX_NAME + '_' + file_name) for k in keys]
         if logflag:
             logger.info(f"[ redis ingest chunks ] keys: {keys}")
         file_ids.extend(keys)
@@ -363,9 +355,13 @@ class OpeaRedisDataprep(OpeaComponent):
         if logflag:
             logger.info(f"[ redis ingest ] files:{files}")
             logger.info(f"[ redis ingest ] link_list:{link_list}")
-        
-        KEY_INDEX_NAME = os.getenv("KEY_INDEX_NAME")
             
+        KEY_INDEX_NAME = os.getenv("KEY_INDEX_NAME", "file-keys")
+        if KEY_INDEX_NAME != "file-keys":
+            logger.info(f"KEY_INDEX_NAME: {KEY_INDEX_NAME} is different than the default one. Setting up the parameters.")
+            self.data_index_client = self.client.ft(INDEX_NAME)
+            self.key_index_client = self.client.ft(KEY_INDEX_NAME)
+                        
         if files:
             if not isinstance(files, list):
                 files = [files]
@@ -373,24 +369,24 @@ class OpeaRedisDataprep(OpeaComponent):
 
             for file in files:
                 encode_file = encode_filename(file.filename)
-                doc_id = "file:" + encode_file
+                doc_id = "file:" + KEY_INDEX_NAME + '_' + encode_file
                 if logflag:
                     logger.info(f"[ redis ingest ] processing file {doc_id}")
 
-                # check whether the file already exists
-                key_ids = None
-                try:
-                    #TODO: =====> this needs to be checked ....
-                    key_ids = search_by_id(self.key_index_client, doc_id).key_ids
-                    if logflag:
-                        logger.info(f"[ redis ingest] File '{file.filename}' already exists in '{KEY_INDEX_NAME}' index.")
-                except Exception as e:
-                    logger.info(f"[ redis ingest] File {file.filename} does not exist.")
-                if key_ids:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Uploaded file '{file.filename}' already exists in '{KEY_INDEX_NAME}' index. Please change file name or 'index_name'.",
-                    )
+                if KEY_INDEX_NAME in self.get_list_of_indices():
+                    # check whether the file already exists
+                    key_ids = None
+                    try:
+                        key_ids = search_by_id(self.key_index_client, doc_id).key_ids
+                        if logflag:
+                            logger.info(f"[ redis ingest] File '{file.filename}' already exists in '{KEY_INDEX_NAME}' index.")
+                    except Exception as e:
+                        logger.info(f"[ redis ingest] File {file.filename} does not exist.")
+                    if key_ids:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Uploaded file '{file.filename}' already exists in '{KEY_INDEX_NAME}' index. Please change file name or 'index_name'.",
+                        )
 
                 save_path = upload_folder + encode_file
                 await save_content_to_local_disk(save_path, file)
@@ -454,7 +450,7 @@ class OpeaRedisDataprep(OpeaComponent):
 
         raise HTTPException(status_code=400, detail="Must provide either a file or a string list.")
 
-    async def get_files(self):
+    async def get_files(self, key_index_name=KEY_INDEX_NAME):
         """Get file structure from redis database in the format of
         {
             "name": "File Name",
@@ -462,7 +458,9 @@ class OpeaRedisDataprep(OpeaComponent):
             "type": "File",
             "parent": "",
         }"""
-
+        
+        if key_index_name is None:
+            key_index_name = KEY_INDEX_NAME
         if logflag:
             logger.info("[ redis get ] start to get file structure")
 
@@ -470,20 +468,20 @@ class OpeaRedisDataprep(OpeaComponent):
         file_list = []
 
         # check index existence
-        res = check_index_existance(self.key_index_client)
+        res = key_index_name in self.get_list_of_indices()
         if not res:
             if logflag:
-                logger.info(f"[ redis get ] index {KEY_INDEX_NAME} does not exist")
+                logger.info(f"[ redis get ] index {key_index_name} does not exist")
             return file_list
 
         while True:
             response = self.client.execute_command(
-                "FT.SEARCH", KEY_INDEX_NAME, "*", "LIMIT", offset, offset + SEARCH_BATCH_SIZE
+                "FT.SEARCH", key_index_name, "*", "LIMIT", offset, offset + SEARCH_BATCH_SIZE
             )
             # no doc retrieved
             if len(response) < 2:
                 break
-            file_list = format_search_results(response, file_list)
+            file_list = format_search_results(response, key_index_name, file_list)
             offset += SEARCH_BATCH_SIZE
             # last batch
             if (len(response) - 1) // 2 < SEARCH_BATCH_SIZE:
@@ -625,26 +623,3 @@ class OpeaRedisDataprep(OpeaComponent):
         indices_list = [item.decode('utf-8') for item in indices]
         return indices_list
     
-    def get_items_of_index(self, index_name=INDEX_NAME): # , redis_client=redis_client):
-        """
-        Retrieves items from a specific index in Redis.
-
-        Args:
-            index_name: The name of the index to search.
-            redis_client: The Redis client instance to use for executing commands.
-
-        Returns:
-            A sorted list of items from the specified index.
-        """
-        # Execute the command to search for all items in the specified index
-        results = self.client.execute_command(f'FT.SEARCH {index_name} {"*"} LIMIT 0 100')
-        list_of_items = []
-        # Iterate through the results
-        for r in results:
-            if isinstance(r, list):
-                # Extract and decode the item where 'source_video' is found in the value
-                list_of_items.append(
-                    [r[i+1].decode('utf-8') for i, v in enumerate(r) if 'source_video' in str(v)][0]
-                )
-        # Return the sorted list of items
-        return sorted(list_of_items)
