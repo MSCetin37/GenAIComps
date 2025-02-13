@@ -70,8 +70,7 @@ jobs:
               cd ./vllm-openvino && git checkout v0.6.1 && git rev-parse HEAD && cd ../
           fi
           if [[ $(grep -c "vllm-gaudi:" ${docker_compose_yml}) != 0 ]]; then
-               git clone https://github.com/HabanaAI/vllm-fork.git vllm-fork
-               cd vllm-fork && git checkout v0.6.4.post2+Gaudi-1.19.0 && cd ../
+              git clone --depth 1 --branch v0.6.4.post2+Gaudi-1.19.0 https://github.com/HabanaAI/vllm-fork.git
           fi
       - name: Get build list
         id: get-build-list
