@@ -99,12 +99,12 @@ def format_redis_conn_from_env():
 REDIS_URL = format_redis_conn_from_env()
 redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
 
-
-def check_index_existance(client):
+def check_index_existance(client, index_name: str = KEY_INDEX_NAME):
     if logflag:
         logger.info(f"[ check index existence ] checking {client}")
     try:
         results = client.search("*")
+        
         if logflag:
             logger.info(f"[ check index existence ] index of client exists: {client}")
         return results
@@ -120,6 +120,8 @@ def create_index(client, index_name: str = KEY_INDEX_NAME):
     try:
         definition = IndexDefinition(index_type=IndexType.HASH, prefix=["file:"])
         client.create_index((TextField("file_name"), TextField("key_ids")), definition=definition)
+        # client.create_index((TextField("index_name"), TextField("file_name"), TextField("key_ids")), definition=definition)
+        
         if logflag:
             logger.info(f"[ create index ] index {index_name} successfully created")
     except Exception as e:
@@ -131,14 +133,14 @@ def create_index(client, index_name: str = KEY_INDEX_NAME):
 
 def store_by_id(client, key, value):
     if logflag:
-        logger.info(f"[ store by id ] storing ids of {key}")
+        logger.info(f"[ store by id ] storing ids of {client.index_name + '_' + key}")
     try:
-        client.add_document(doc_id="file:" + key, file_name=key, key_ids=value)
+        client.add_document(doc_id="file:" + client.index_name + '_' + key, file_name=client.index_name + '_' + key, key_ids=value)
         if logflag:
-            logger.info(f"[ store by id ] store document success. id: file:{key}")
+            logger.info(f"[ store by id ] store document success. id: file:{client.index_name + '_' + key}")
     except Exception as e:
         if logflag:
-            logger.info(f"[ store by id ] fail to store document file:{key}: {e}")
+            logger.info(f"[ store by id ] fail to store document file:{client.index_name + '_' + key}: {e}")
         return False
     return True
 
@@ -184,8 +186,9 @@ def delete_by_id(client, id):
 
 
 def ingest_chunks_to_redis(file_name: str, chunks: List):
+    KEY_INDEX_NAME = os.getenv("KEY_INDEX_NAME", "file-keys")    
     if logflag:
-        logger.info(f"[ redis ingest chunks ] file name: {file_name}")
+        logger.info(f"[ redis ingest chunks ] file name: '{file_name}' to '{KEY_INDEX_NAME}' index.")
     # Create vectorstore
     if TEI_EMBEDDING_ENDPOINT:
         if not HUGGINGFACEHUB_API_TOKEN:
@@ -223,23 +226,26 @@ def ingest_chunks_to_redis(file_name: str, chunks: List):
         _, keys = Redis.from_texts_return_keys(
             texts=batch_texts,
             embedding=embedder,
-            index_name=INDEX_NAME,
+            index_name=KEY_INDEX_NAME,
             redis_url=REDIS_URL,
         )
+        keys = [k.replace(KEY_INDEX_NAME, KEY_INDEX_NAME + '_' + file_name) for k in keys]
         if logflag:
             logger.info(f"[ redis ingest chunks ] keys: {keys}")
         file_ids.extend(keys)
         if logflag:
             logger.info(f"[ redis ingest chunks ] Processed batch {i//batch_size + 1}/{(num_chunks-1)//batch_size + 1}")
-
+    
     # store file_ids into index file-keys
     r = redis.Redis(connection_pool=redis_pool)
     client = r.ft(KEY_INDEX_NAME)
+    
     if not check_index_existance(client):
-        assert create_index(client)
-
+        assert create_index(client, index_name=KEY_INDEX_NAME)
+    
     try:
         assert store_by_id(client, key=file_name, value="#".join(file_ids))
+        
     except Exception as e:
         if logflag:
             logger.info(f"[ redis ingest chunks ] {e}. Fail to store chunks of file {file_name}.")
@@ -288,6 +294,7 @@ def ingest_data_to_redis(doc_path: DocPath):
         logger.info(f"[ redis ingest data ] Done preprocessing. Created {len(chunks)} chunks of the given file.")
 
     file_name = doc_path.path.split("/")[-1]
+    
     return ingest_chunks_to_redis(file_name, chunks)
 
 
@@ -364,7 +371,13 @@ class OpeaRedisDataprep(OpeaComponent):
         if logflag:
             logger.info(f"[ redis ingest ] files:{files}")
             logger.info(f"[ redis ingest ] link_list:{link_list}")
-
+            
+        KEY_INDEX_NAME = os.getenv("KEY_INDEX_NAME", "file-keys")
+        if KEY_INDEX_NAME != "file-keys":
+            logger.info(f"KEY_INDEX_NAME: {KEY_INDEX_NAME} is different than the default one. Setting up the parameters.")
+            self.data_index_client = self.client.ft(INDEX_NAME)
+            self.key_index_client = self.client.ft(KEY_INDEX_NAME)
+                        
         if files:
             if not isinstance(files, list):
                 files = [files]
@@ -372,26 +385,28 @@ class OpeaRedisDataprep(OpeaComponent):
 
             for file in files:
                 encode_file = encode_filename(file.filename)
-                doc_id = "file:" + encode_file
+                doc_id = "file:" + KEY_INDEX_NAME + '_' + encode_file
                 if logflag:
                     logger.info(f"[ redis ingest ] processing file {doc_id}")
 
-                # check whether the file already exists
-                key_ids = None
-                try:
-                    key_ids = search_by_id(self.key_index_client, doc_id).key_ids
-                    if logflag:
-                        logger.info(f"[ redis ingest] File {file.filename} already exists.")
-                except Exception as e:
-                    logger.info(f"[ redis ingest] File {file.filename} does not exist.")
-                if key_ids:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Uploaded file {file.filename} already exists. Please change file name.",
-                    )
+                if KEY_INDEX_NAME in self.get_list_of_indices():
+                    # check whether the file already exists
+                    key_ids = None
+                    try:
+                        key_ids = search_by_id(self.key_index_client, doc_id).key_ids
+                        if logflag:
+                            logger.info(f"[ redis ingest] File '{file.filename}' already exists in '{KEY_INDEX_NAME}' index.")
+                    except Exception as e:
+                        logger.info(f"[ redis ingest] File {file.filename} does not exist.")
+                    if key_ids:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Uploaded file '{file.filename}' already exists in '{KEY_INDEX_NAME}' index. Please change file name or 'index_name'.",
+                        )
 
                 save_path = upload_folder + encode_file
                 await save_content_to_local_disk(save_path, file)
+                
                 ingest_data_to_redis(
                     DocPath(
                         path=save_path,
@@ -451,7 +466,7 @@ class OpeaRedisDataprep(OpeaComponent):
 
         raise HTTPException(status_code=400, detail="Must provide either a file or a string list.")
 
-    async def get_files(self):
+    async def get_files(self, key_index_name=KEY_INDEX_NAME):
         """Get file structure from redis database in the format of
         {
             "name": "File Name",
@@ -459,7 +474,9 @@ class OpeaRedisDataprep(OpeaComponent):
             "type": "File",
             "parent": "",
         }"""
-
+        
+        if key_index_name is None:
+            key_index_name = KEY_INDEX_NAME
         if logflag:
             logger.info("[ redis get ] start to get file structure")
 
@@ -467,20 +484,20 @@ class OpeaRedisDataprep(OpeaComponent):
         file_list = []
 
         # check index existence
-        res = check_index_existance(self.key_index_client)
+        res = key_index_name in self.get_list_of_indices()
         if not res:
             if logflag:
-                logger.info(f"[ redis get ] index {KEY_INDEX_NAME} does not exist")
+                logger.info(f"[ redis get ] index {key_index_name} does not exist")
             return file_list
 
         while True:
             response = self.client.execute_command(
-                "FT.SEARCH", KEY_INDEX_NAME, "*", "LIMIT", offset, offset + SEARCH_BATCH_SIZE
+                "FT.SEARCH", key_index_name, "*", "LIMIT", offset, offset + SEARCH_BATCH_SIZE
             )
             # no doc retrieved
             if len(response) < 2:
                 break
-            file_list = format_search_results(response, file_list)
+            file_list = format_search_results(response, key_index_name, file_list)
             offset += SEARCH_BATCH_SIZE
             # last batch
             if (len(response) - 1) // 2 < SEARCH_BATCH_SIZE:
@@ -608,3 +625,17 @@ class OpeaRedisDataprep(OpeaComponent):
             if logflag:
                 logger.info(f"[ redis delete ] Delete folder {file_path} is not supported for now.")
             raise HTTPException(status_code=404, detail=f"Delete folder {file_path} is not supported for now.")
+
+    def get_list_of_indices(self):
+        """
+        Retrieves a list of all indices from the Redis client.
+        
+        Returns:
+            A list of index names as strings.
+        """
+        # Execute the command to list all indices
+        indices = self.client.execute_command('FT._LIST')
+        # Decode each index name from bytes to string
+        indices_list = [item.decode('utf-8') for item in indices]
+        return indices_list
+    

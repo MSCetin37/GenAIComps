@@ -7,9 +7,9 @@ import time
 from typing import List, Optional, Union
 
 from fastapi import Body, File, UploadFile
-from integrations.redis_multimodal import OpeaMultimodalRedisDataprep
-from integrations.vdms_multimodal import OpeaMultimodalVdmsDataprep
-from opea_dataprep_loader import OpeaDataprepMultiModalLoader
+from comps.dataprep.src.integrations.redis_multimodal import OpeaMultimodalRedisDataprep
+from comps.dataprep.src.integrations.vdms_multimodal import OpeaMultimodalVdmsDataprep
+from comps.dataprep.src.opea_dataprep_loader import OpeaDataprepMultiModalLoader
 
 from comps import (
     CustomLogger,
@@ -41,9 +41,15 @@ loader = OpeaDataprepMultiModalLoader(
     port=5000,
 )
 @register_statistics(names=["opea_service@dataprep_multimodal"])
-async def ingest_files(files: Optional[Union[UploadFile, List[UploadFile]]] = File(None)):
+async def ingest_files(files: Optional[Union[UploadFile, List[UploadFile]]] = File(None),  
+                       index_name: Optional[str] = File(None)
+                       ):
     start = time.time()
-
+        
+    if index_name:
+        # Set an environment variable
+        os.environ['INDEX_NAME'] = index_name
+        
     if logflag:
         logger.info(f"[ ingest ] files:{files}")
 
@@ -255,6 +261,67 @@ async def delete_files(file_path: str = Body(..., embed=True)):
         return response
     except Exception as e:
         logger.error(f"Error during dataprep delete invocation: {e}")
+        raise
+
+@register_microservice(
+    name="opea_service@dataprep_multimodal",
+    service_type=ServiceType.DATAPREP,
+    endpoint="/v1/dataprep/indices",
+    host="0.0.0.0",
+    port=5000,
+)
+@register_statistics(names=["opea_service@dataprep_multimodal"])
+async def get_list_of_indices():
+    start = time.time()
+    
+    if logflag:
+        logger.info("[ get ] start to get list of indices.")
+
+    try:
+        # Use the loader to invoke the component
+        response = await loader.get_list_of_indices()
+        
+        # Log the result if logging is enabled
+        if logflag:
+            logger.info(f"[ get ] list of indices: {response}")
+            
+        # Record statistics
+        statistics_dict["opea_service@dataprep_multimodal"].append_latency(time.time() - start, None)
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error during dataprep get list of indices: {e}")
+        raise
+
+
+@register_microservice(
+    name="opea_service@dataprep_multimodal",
+    service_type=ServiceType.DATAPREP,
+    endpoint="/v1/dataprep/items_of_index",
+    host="0.0.0.0",
+    port=5000,
+)
+@register_statistics(names=["opea_service@dataprep_multimodal"])
+async def get_items_of_index(index_name: Optional[str] = File(None) ):
+    start = time.time()
+        
+    if logflag:
+        logger.info(f"[ get ] start to get items of index:{index_name}.")
+
+    try:
+        # Use the loader to invoke the component
+        response = await loader.get_items_of_index(index_name)
+                
+        # Log the result if logging is enabled
+        if logflag:
+            logger.info(f"[ get ] items of index: {response}")
+            
+        # Record statistics
+        statistics_dict["opea_service@dataprep_multimodal"].append_latency(time.time() - start, None)
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error during dataprep get list of indexes: {e}")
         raise
 
 
