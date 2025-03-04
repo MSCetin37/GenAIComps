@@ -267,6 +267,9 @@ class ChatCompletionRequest(BaseModel):
 
     # define
     request_type: Literal["chat"] = "chat"
+    
+    # key index name
+    key_index_name: Optional[str] = None
 
 
 class DocSumChatCompletionRequest(ChatCompletionRequest):
