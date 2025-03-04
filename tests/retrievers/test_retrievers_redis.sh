@@ -18,7 +18,9 @@ service_name_mm="retriever-redis-multimodal"
 
 function build_docker_images() {
     cd $WORKPATH
-    docker build --no-cache -t ${REGISTRY:-opea}/retriever:${TAG:-latest} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f comps/retrievers/src/Dockerfile .
+    # docker build --no-cache -t ${REGISTRY:-opea}/retriever:${TAG:-latest} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f comps/retrievers/src/Dockerfile .
+    docker build -t ${REGISTRY:-opea}/retriever:${TAG:-latest} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f comps/retrievers/src/Dockerfile .
+    
     if [ $? -ne 0 ]; then
         echo "opea/retriever built fail"
         exit 1
@@ -137,7 +139,7 @@ function stop_docker() {
 
 function main() {
 
-    stop_docker
+    # stop_docker
     build_docker_images
 
     # test text retriever
@@ -152,9 +154,9 @@ function main() {
     validate_microservice "$test_embedding_multi" "$service_name_mm"
     validate_mm_microservice "$test_embedding_multi" "$service_name_mm"
 
-    # clean env
-    stop_docker
-    echo y | docker system prune
+    # # clean env
+    # stop_docker
+    # echo y | docker system prune
 
 }
 
