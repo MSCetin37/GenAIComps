@@ -403,6 +403,7 @@ class DocSumChatCompletionRequest(ChatCompletionRequest):
     chunk_size: int = -1
     chunk_overlap: int = -1
     type: Optional[str] = None
+    custom_prompt: Optional[str] = None
 
 
 class AudioChatCompletionRequest(BaseModel):
